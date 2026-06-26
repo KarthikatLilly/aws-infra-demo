@@ -1,0 +1,138 @@
+# =============================================================================
+# sns.yml — StatusPulse SNS FIFO topic
+#
+# Purpose : Creates a FIFO SNS topic with a resource policy.
+#           Optionally creates a single subscription (e.g., for alerting).
+#
+# Inputs  : TopicBaseName, EnvironmentName, KmsMasterKeyId (optional),
+#           InitialSubscriptionProtocol (optional),
+#           InitialSubscriptionEndpoint (optional)
+#
+# Outputs : TopicArn, TopicName
+# =============================================================================
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  StatusPulse – SNS FIFO topic.
+  Optionally subscribes one endpoint (e.g., SQS or email) at creation time.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  TopicBaseName:
+    Type: String
+    Description: >
+      Base name of the topic (without environment suffix or .fifo suffix).
+      Example: statuspulse-events
+
+  EnvironmentName:
+    Type: String
+    Description: Deployment environment (dev, qa, prod).
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+
+  KmsMasterKeyId:
+    Type: String
+    Description: >
+      Optional – KMS key ID or alias for server-side encryption.
+      Leave blank to use the AWS-managed SNS key.
+    Default: ""
+
+  InitialSubscriptionProtocol:
+    Type: String
+    Description: >
+      Optional – protocol for the initial subscription (sqs, email, https…).
+      Leave blank to skip subscription creation.
+    Default: ""
+
+  InitialSubscriptionEndpoint:
+    Type: String
+    Description: >
+      Optional – endpoint ARN or address for the initial subscription.
+      Leave blank to skip subscription creation.
+    Default: ""
+
+# ---------------------------------------------------------------------------
+# Conditions
+# ---------------------------------------------------------------------------
+Conditions:
+  HasKmsKey: !Not [!Equals [!Ref KmsMasterKeyId, ""]]
+  HasInitialSubscription: !Not [!Equals [!Ref InitialSubscriptionEndpoint, ""]]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # --- FIFO topic -----------------------------------------------------------
+  StatusPulseTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      # FIFO topics must have names ending in .fifo
+      TopicName: !Sub "${TopicBaseName}-${EnvironmentName}.fifo"
+      FifoTopic: true
+      # Content-based deduplication lets producers omit a deduplication ID
+      ContentBasedDeduplication: true
+      KmsMasterKeyId: !If [HasKmsKey, !Ref KmsMasterKeyId, !Ref AWS::NoValue]
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: StatusPulse
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # --- Topic policy ---------------------------------------------------------
+  # Allows this account's services to publish; explicitly denies other accounts.
+  StatusPulseTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref StatusPulseTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAccountPublish
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: sns:Publish
+            Resource: !Ref StatusPulseTopic
+          - Sid: AllowSNSToSQS
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref StatusPulseTopic
+
+  # --- Optional initial subscription ----------------------------------------
+  InitialSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasInitialSubscription
+    Properties:
+      TopicArn: !Ref StatusPulseTopic
+      Protocol: !Ref InitialSubscriptionProtocol
+      Endpoint: !Ref InitialSubscriptionEndpoint
+      # For SQS subscriptions, raw delivery avoids the SNS envelope wrapper
+      RawMessageDelivery: !Equals [!Ref InitialSubscriptionProtocol, sqs]
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  TopicArn:
+    Description: ARN of the SNS FIFO topic.
+    Value: !Ref StatusPulseTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-TopicArn"
+
+  TopicName:
+    Description: Name of the SNS FIFO topic.
+    Value: !GetAtt StatusPulseTopic.TopicName
+    Export:
+      Name: !Sub "${AWS::StackName}-TopicName"

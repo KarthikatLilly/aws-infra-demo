@@ -1,0 +1,10 @@
+[
+  { "ParameterKey": "ApiBaseName",            "ParameterValue": "statuspulse-api-prod" },
+  { "ParameterKey": "StageName",              "ParameterValue": "prod" },
+  { "ParameterKey": "ThrottlingBurstLimit",   "ParameterValue": "500" },
+  { "ParameterKey": "ThrottlingRateLimit",    "ParameterValue": "200" },
+  { "ParameterKey": "CorsAllowOrigins",       "ParameterValue": "REPLACE_WITH_PROD_CORS_ORIGINS" },
+  { "ParameterKey": "MainQueueUrl",           "ParameterValue": "REPLACE_WITH_PROD_MAIN_QUEUE_URL" },
+  { "ParameterKey": "MainQueueArn",           "ParameterValue": "REPLACE_WITH_PROD_MAIN_QUEUE_ARN" },
+  { "ParameterKey": "ApiGatewayRoleArn",      "ParameterValue": "REPLACE_WITH_PROD_APIGW_ROLE_ARN" }
+]

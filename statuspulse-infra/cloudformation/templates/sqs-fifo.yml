@@ -1,0 +1,168 @@
+# =============================================================================
+# sqs-fifo.yml — StatusPulse SQS FIFO queue + DLQ
+#
+# Purpose : Creates a FIFO main queue and its FIFO DLQ.
+#           Attaches a queue policy allowing the SNS topic to send.
+#           Subscribes the main queue to the SNS topic.
+#
+# Inputs  : QueueBaseName, EnvironmentName, SnsTopicArn,
+#           VisibilityTimeoutSeconds, MaxReceiveCount,
+#           ContentBasedDeduplication
+#
+# Outputs : MainQueueUrl, MainQueueArn, DlqUrl, DlqArn
+# =============================================================================
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  StatusPulse – SQS FIFO main queue and dead-letter queue.
+  The main queue subscribes to the SNS FIFO topic via a managed subscription.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  QueueBaseName:
+    Type: String
+    Description: >
+      Base name for the queue (without environment suffix or .fifo suffix).
+      Example: statuspulse-events
+
+  EnvironmentName:
+    Type: String
+    Description: Deployment environment (dev, qa, prod).
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+
+  SnsTopicArn:
+    Type: String
+    Description: ARN of the SNS FIFO topic this queue should subscribe to.
+
+  VisibilityTimeoutSeconds:
+    Type: Number
+    Description: >
+      How long (in seconds) a message is invisible after being received.
+      Must be >= the maximum processing time of a single message.
+    Default: 30
+    MinValue: 0
+    MaxValue: 43200
+
+  MaxReceiveCount:
+    Type: Number
+    Description: >
+      Number of times a message can be received before being moved to the DLQ.
+    Default: 3
+    MinValue: 1
+    MaxValue: 1000
+
+  ContentBasedDeduplication:
+    Type: String
+    Description: >
+      Derive deduplication ID from the message body (avoids requiring producers
+      to set a MessageDeduplicationId).
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # --- Dead-letter queue ----------------------------------------------------
+  StatusPulseDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${QueueBaseName}-${EnvironmentName}-dlq.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: !Equals [!Ref ContentBasedDeduplication, "true"]
+      # Retain messages in DLQ for 14 days for investigation
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: StatusPulse
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # --- Main FIFO queue ------------------------------------------------------
+  StatusPulseQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${QueueBaseName}-${EnvironmentName}.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: !Equals [!Ref ContentBasedDeduplication, "true"]
+      VisibilityTimeout: !Ref VisibilityTimeoutSeconds
+      # Route failed messages to DLQ after MaxReceiveCount attempts
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt StatusPulseDlq.Arn
+        maxReceiveCount: !Ref MaxReceiveCount
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: StatusPulse
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # --- Queue policy — allows SNS to send to the main queue ------------------
+  StatusPulseQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref StatusPulseQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowSnsPublish
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt StatusPulseQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref SnsTopicArn
+
+  # --- SNS subscription — wires the topic to the main queue ----------------
+  SnsToQueueSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SnsTopicArn
+      Protocol: sqs
+      Endpoint: !GetAtt StatusPulseQueue.Arn
+      # Raw delivery: skip the SNS JSON envelope so consumers see the raw body
+      RawMessageDelivery: true
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  MainQueueUrl:
+    Description: URL of the main SQS FIFO queue.
+    Value: !Ref StatusPulseQueue
+    Export:
+      Name: !Sub "${AWS::StackName}-MainQueueUrl"
+
+  MainQueueArn:
+    Description: ARN of the main SQS FIFO queue.
+    Value: !GetAtt StatusPulseQueue.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-MainQueueArn"
+
+  DlqUrl:
+    Description: URL of the dead-letter queue.
+    Value: !Ref StatusPulseDlq
+    Export:
+      Name: !Sub "${AWS::StackName}-DlqUrl"
+
+  DlqArn:
+    Description: ARN of the dead-letter queue.
+    Value: !GetAtt StatusPulseDlq.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-DlqArn"

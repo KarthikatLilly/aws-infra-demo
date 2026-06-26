@@ -1,0 +1,7 @@
+[
+  { "ParameterKey": "TopicBaseName",                  "ParameterValue": "statuspulse-events" },
+  { "ParameterKey": "EnvironmentName",                "ParameterValue": "prod" },
+  { "ParameterKey": "KmsMasterKeyId",                 "ParameterValue": "REPLACE_WITH_PROD_KMS_KEY_ID" },
+  { "ParameterKey": "InitialSubscriptionProtocol",    "ParameterValue": "" },
+  { "ParameterKey": "InitialSubscriptionEndpoint",    "ParameterValue": "" }
+]

@@ -1,0 +1,8 @@
+[
+  { "ParameterKey": "QueueBaseName",               "ParameterValue": "statuspulse-events" },
+  { "ParameterKey": "EnvironmentName",             "ParameterValue": "prod" },
+  { "ParameterKey": "SnsTopicArn",                 "ParameterValue": "REPLACE_WITH_PROD_SNS_TOPIC_ARN" },
+  { "ParameterKey": "VisibilityTimeoutSeconds",    "ParameterValue": "60" },
+  { "ParameterKey": "MaxReceiveCount",             "ParameterValue": "5" },
+  { "ParameterKey": "ContentBasedDeduplication",   "ParameterValue": "true" }
+]

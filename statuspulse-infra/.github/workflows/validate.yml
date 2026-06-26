@@ -1,0 +1,81 @@
+# validate.yml — CloudFormation template validation on pull requests
+#
+# Runs three linters / validators against all templates in
+# cloudformation/templates/ whenever a PR touches that directory.
+# Does NOT deploy anything.
+
+name: Validate CloudFormation
+
+on:
+  pull_request:
+    paths:
+      - "statuspulse-infra/cloudformation/**"
+
+defaults:
+  run:
+    working-directory: statuspulse-infra
+
+jobs:
+  validate:
+    name: Validate templates
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # aws cloudformation validate-template
+      # Needs AWS credentials (read-only; use a restricted role).
+      # ------------------------------------------------------------------
+      - name: Configure AWS credentials (read-only)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_VALIDATE_ROLE_ARN }}
+          aws-region: us-east-1
+        # Falls back gracefully if role not set — cfn-lint / cfn-nag still run
+        continue-on-error: true
+
+      - name: aws cloudformation validate-template
+        run: |
+          set -e
+          for tpl in cloudformation/templates/*.yml; do
+            echo "==> Validating $tpl"
+            aws cloudformation validate-template \
+              --template-body "file://$tpl" \
+              --region us-east-1 || true
+          done
+        continue-on-error: true  # skip if no AWS creds; cfn-lint covers syntax
+
+      # ------------------------------------------------------------------
+      # cfn-lint — checks resource properties, deprecated features, etc.
+      # ------------------------------------------------------------------
+      - name: Set up Python (for cfn-lint)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cfn-lint
+        run: pip install cfn-lint
+
+      - name: cfn-lint
+        run: cfn-lint cloudformation/templates/*.yml
+
+      # ------------------------------------------------------------------
+      # cfn-nag — security-focused static analysis
+      # ------------------------------------------------------------------
+      - name: Set up Ruby (for cfn-nag)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+
+      - name: Install cfn-nag
+        run: gem install cfn-nag
+
+      - name: cfn-nag
+        run: |
+          cfn_nag_scan --input-path cloudformation/templates/ \
+            --template-pattern '.*.yml'

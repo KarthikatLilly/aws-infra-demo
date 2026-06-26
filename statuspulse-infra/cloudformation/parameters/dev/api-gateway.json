@@ -1,0 +1,10 @@
+[
+  { "ParameterKey": "ApiBaseName",            "ParameterValue": "statuspulse-api-dev" },
+  { "ParameterKey": "StageName",              "ParameterValue": "dev" },
+  { "ParameterKey": "ThrottlingBurstLimit",   "ParameterValue": "50" },
+  { "ParameterKey": "ThrottlingRateLimit",    "ParameterValue": "25" },
+  { "ParameterKey": "CorsAllowOrigins",       "ParameterValue": "*" },
+  { "ParameterKey": "MainQueueUrl",           "ParameterValue": "REPLACE_WITH_MAIN_QUEUE_URL" },
+  { "ParameterKey": "MainQueueArn",           "ParameterValue": "REPLACE_WITH_MAIN_QUEUE_ARN" },
+  { "ParameterKey": "ApiGatewayRoleArn",      "ParameterValue": "REPLACE_WITH_APIGW_ROLE_ARN" }
+]

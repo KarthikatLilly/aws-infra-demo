@@ -1,0 +1,138 @@
+# =============================================================================
+# dynamodb.yml — StatusPulse single-table store
+#
+# Purpose : Creates the DynamoDB table that backs all StatusPulse data.
+#           Uses a single-table design with one GSI.
+#
+# Inputs  : TableName, BillingMode, PointInTimeRecoveryEnabled,
+#           DeletionProtection, TTLAttributeName
+#
+# Outputs : TableName, TableArn
+# =============================================================================
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  StatusPulse – DynamoDB single-table store.
+  Primary key: pk (HASH) + sk (RANGE).
+  GSI1: gsi1pk (HASH) + gsi1sk (RANGE).
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  TableName:
+    Type: String
+    Description: Physical name of the DynamoDB table.
+    MinLength: 3
+    MaxLength: 255
+
+  BillingMode:
+    Type: String
+    Description: PAY_PER_REQUEST (on-demand) or PROVISIONED.
+    Default: PAY_PER_REQUEST
+    AllowedValues:
+      - PAY_PER_REQUEST
+      - PROVISIONED
+
+  PointInTimeRecoveryEnabled:
+    Type: String
+    Description: Enable PITR (continuous backups).
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+
+  DeletionProtection:
+    Type: String
+    Description: Prevent accidental deletion of the table.
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+
+  TTLAttributeName:
+    Type: String
+    Description: Attribute name used as the TTL field.
+    Default: ttl
+
+# ---------------------------------------------------------------------------
+# Conditions
+# ---------------------------------------------------------------------------
+Conditions:
+  IsPitrEnabled: !Equals [!Ref PointInTimeRecoveryEnabled, "true"]
+  IsDeletionProtected: !Equals [!Ref DeletionProtection, "true"]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  StatusPulseTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain   # keep data if the stack is deleted
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: !Ref BillingMode
+      DeletionProtectionEnabled: !If [IsDeletionProtected, true, false]
+
+      # --- Attribute definitions (only indexed attributes are listed here) ---
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+
+      # --- Primary key ---
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+      # --- GSI1 — supports alternate access patterns ---
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+      # --- Time-to-live ---
+      TimeToLiveSpecification:
+        AttributeName: !Ref TTLAttributeName
+        Enabled: true
+
+      # --- Continuous backups (PITR) ---
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsPitrEnabled, true, false]
+
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: StatusPulse
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  TableName:
+    Description: Physical name of the DynamoDB table.
+    Value: !Ref StatusPulseTable
+    Export:
+      Name: !Sub "${AWS::StackName}-TableName"
+
+  TableArn:
+    Description: ARN of the DynamoDB table.
+    Value: !GetAtt StatusPulseTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-TableArn"

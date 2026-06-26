@@ -1,0 +1,183 @@
+# =============================================================================
+# api-gateway.yml — StatusPulse HTTP API (API Gateway v2)
+#
+# Purpose : Creates an HTTP API with two routes:
+#             GET  /health  → mock integration (returns 200 OK immediately)
+#             POST /events  → AWS service integration → SQS SendMessage
+#           The SQS integration uses a caller-supplied IAM role (no Lambda
+#           needed), keeping the stack lightweight.
+#
+# Inputs  : ApiBaseName, StageName, ThrottlingBurstLimit,
+#           ThrottlingRateLimit, CorsAllowOrigins,
+#           MainQueueUrl, MainQueueArn, ApiGatewayRoleArn
+#
+# Outputs : HttpApiId, InvokeUrl
+# =============================================================================
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  StatusPulse – HTTP API Gateway v2.
+  GET /health returns a static 200.
+  POST /events forwards to SQS via a direct AWS service integration.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  ApiBaseName:
+    Type: String
+    Description: Base name for the API (used in display names).
+    Default: statuspulse-api
+
+  StageName:
+    Type: String
+    Description: Name of the deployed stage (e.g., dev, qa, prod, v1).
+    Default: v1
+
+  ThrottlingBurstLimit:
+    Type: Number
+    Description: Max concurrent requests the stage allows (burst).
+    Default: 100
+
+  ThrottlingRateLimit:
+    Type: Number
+    Description: Steady-state requests per second allowed.
+    Default: 50
+
+  CorsAllowOrigins:
+    Type: String
+    Description: >
+      Comma-separated list of allowed origins, or "*".
+      Example: https://app.example.com
+    Default: "*"
+
+  MainQueueUrl:
+    Type: String
+    Description: URL of the SQS FIFO main queue (used in the integration URI).
+
+  MainQueueArn:
+    Type: String
+    Description: ARN of the SQS FIFO main queue.
+
+  ApiGatewayRoleArn:
+    Type: String
+    Description: >
+      ARN of the IAM role API Gateway assumes to call SQS.
+      Must have sqs:SendMessage permission on MainQueueArn.
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # --- HTTP API -------------------------------------------------------------
+  StatusPulseHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${ApiBaseName}"
+      Description: StatusPulse HTTP API – health check and event ingestion.
+      ProtocolType: HTTP
+      # CORS configuration — lets browsers call the API directly
+      CorsConfiguration:
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowOrigins: !Split [",", !Ref CorsAllowOrigins]
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Amz-Date
+          - X-Api-Key
+        MaxAge: 300
+
+  # --- Mock integration: GET /health ----------------------------------------
+  # Returns a static 200 with a JSON body without invoking any backend.
+  HealthIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      IntegrationType: MOCK
+      RequestTemplates:
+        "200": '{"statusCode": 200}'
+      TemplateSelectionExpression: "200"
+      PayloadFormatVersion: "1.0"
+
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      RouteKey: "GET /health"
+      Target: !Sub "integrations/${HealthIntegration}"
+
+  HealthIntegrationResponse:
+    Type: AWS::ApiGatewayV2::IntegrationResponse
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      IntegrationId: !Ref HealthIntegration
+      IntegrationResponseKey: /200/
+      ResponseTemplates:
+        "200": '{"status":"ok"}'
+
+  HealthRouteResponse:
+    Type: AWS::ApiGatewayV2::RouteResponse
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      RouteId: !Ref HealthRoute
+      RouteResponseKey: $default
+
+  # --- AWS service integration: POST /events → SQS SendMessage --------------
+  # API Gateway calls SQS directly; no Lambda is needed.
+  EventsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationSubtype: SQS-SendMessage
+      CredentialsArn: !Ref ApiGatewayRoleArn
+      PayloadFormatVersion: "1.0"
+      # Map API Gateway request fields to SQS SendMessage parameters
+      RequestParameters:
+        QueueUrl: !Ref MainQueueUrl
+        MessageBody: "$request.body"
+        # FIFO queues require a MessageGroupId; use a header or default to "default"
+        MessageGroupId: "$request.header.x-message-group-id"
+
+  EventsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      RouteKey: "POST /events"
+      Target: !Sub "integrations/${EventsIntegration}"
+
+  # --- Stage ----------------------------------------------------------------
+  StatusPulseStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      StageName: !Ref StageName
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: !Ref ThrottlingBurstLimit
+        ThrottlingRateLimit: !Ref ThrottlingRateLimit
+      Tags:
+        ManagedBy: CloudFormation
+        Project: StatusPulse
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  HttpApiId:
+    Description: ID of the HTTP API.
+    Value: !Ref StatusPulseHttpApi
+    Export:
+      Name: !Sub "${AWS::StackName}-HttpApiId"
+
+  InvokeUrl:
+    Description: Base URL for invoking the API.
+    Value: !Sub "https://${StatusPulseHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-InvokeUrl"
