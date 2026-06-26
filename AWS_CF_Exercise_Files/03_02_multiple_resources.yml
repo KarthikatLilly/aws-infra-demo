@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This template creates a single EC2 instance with a public IP accessible to 
+  the world on port 80.  The template installs and starts nginx, then outputs the 
+  public IP value to CloudFormation.
+  Note: to get VSCode to stop flagging Cloudformation functions as invalid,
+  edit your settings.json customTags section.  
+  See https://github.com/redhat-developer/vscode-yaml/issues/669
+
+Parameters:
+
+  MyInstanceType:
+    Description: Choose from a few t3 instance types
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+
+  MyImageId:
+    Description: Enter the value of the base AMI for this instance.
+    Type: String
+    Default: ami-05b10e08d247fb927
+
+Resources:
+
+  MyInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref MyImageId
+      InstanceType: !Ref MyInstanceType
+      SecurityGroupIds:
+        - !Ref MySecurityGroup      
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          yum update -y
+          yum install -y nginx
+          systemctl enable nginx
+          systemctl start nginx
+      Tags:
+        - Key: Name
+          Value: MyNginxServer
+
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP traffic from the world
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0               
+
+  MyEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  MyEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt MyEIP.AllocationId
+      InstanceId: !Ref MyInstance          
+
+Outputs:
+  PublicIP:
+    Description: Public IP of the EC2 instance
+    Value: !GetAtt MyInstance.PublicIp

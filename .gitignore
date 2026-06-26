@@ -1,0 +1,33 @@
+﻿# OS junk
+Thumbs.db
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+
+# AWS local artifacts
+*.zip
+.cfn-output/
+.aws-sam/
+
+# Logs
+*.log
+
+# Secrets - never commit
+.env
+.env.*
+secrets/
+*.pem
+*.key
+*.crt

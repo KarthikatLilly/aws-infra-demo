@@ -1,0 +1,10 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This template creates a single EC2
+  instance with a hard-coded AMI and size!
+Resources:
+  MyInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-08b5b3a93ed654d19
+      InstanceType: t3.micro
