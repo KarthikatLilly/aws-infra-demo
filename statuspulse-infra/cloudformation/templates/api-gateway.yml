@@ -1,24 +1,26 @@
 # =============================================================================
-# api-gateway.yml — StatusPulse HTTP API (API Gateway v2)
+# api-gateway.yml — StatusPulse HTTP API (API Gateway v2) — CORRECTED
 #
-# Purpose : Creates an HTTP API with two routes:
-#             GET  /health  → mock integration (returns 200 OK immediately)
-#             POST /events  → AWS service integration → SQS SendMessage
-#           The SQS integration uses a caller-supplied IAM role (no Lambda
-#           needed), keeping the stack lightweight.
+# Key fixes vs the broken version:
+#   1. POST /events uses AWS_PROXY + IntegrationSubtype: SQS-SendMessage
+#      (HTTP APIs do NOT support IntegrationType: AWS or VTL RequestTemplates).
+#   2. GET /health no longer uses MOCK (MOCK is WebSocket-only on ApiGatewayV2).
+#      It uses an AWS_PROXY SQS-SendMessage-style integration is NOT a health
+#      check, so instead /health is implemented as a second SQS route would be
+#      wrong — we keep it honest: see note. For a true no-Lambda 200, we use a
+#      tiny inline-free approach: route to the same integration is not a health
+#      check. We therefore expose only the real ingest route here and document
+#      that /health on an HTTP API needs a Lambda or an external check.
 #
-# Inputs  : ApiBaseName, StageName, ThrottlingBurstLimit,
-#           ThrottlingRateLimit, CorsAllowOrigins,
-#           MainQueueUrl, MainQueueArn, ApiGatewayRoleArn
-#
-# Outputs : HttpApiId, InvokeUrl
+#   --> Practical POC choice below: keep POST /events working (the thing that
+#       matters), and implement GET /health via a minimal AWS_PROXY to SQS is
+#       not viable. We instead omit MOCK and note the limitation.
 # =============================================================================
 
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  StatusPulse – HTTP API Gateway v2
-  GET /health → mock
-  POST /events → SQS integration
+  StatusPulse – HTTP API Gateway v2.
+  POST /events → SQS SendMessage (AWS_PROXY service integration, no Lambda).
 
 Parameters:
   ApiBaseName:
@@ -43,13 +45,15 @@ Parameters:
 
   MainQueueUrl:
     Type: String
+    Description: URL of the SQS FIFO main queue.
 
   ApiGatewayRoleArn:
     Type: String
+    Description: IAM role API Gateway assumes; must allow sqs:SendMessage on the queue.
 
 Resources:
 
-  # HTTP API
+  # --- HTTP API -------------------------------------------------------------
   StatusPulseHttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
@@ -58,42 +62,23 @@ Resources:
       CorsConfiguration:
         AllowOrigins: !Split [",", !Ref CorsAllowOrigins]
         AllowMethods: [GET, POST, OPTIONS]
-        AllowHeaders: [Content-Type, Authorization, X-Amz-Date, X-Api-Key]
+        AllowHeaders: [Content-Type, Authorization, X-Amz-Date, X-Api-Key, x-message-group-id]
 
-  # HEALTH CHECK
-  HealthIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref StatusPulseHttpApi
-      IntegrationType: MOCK
-      PayloadFormatVersion: "1.0"
-      RequestTemplates:
-        "200": '{"statusCode":200}'
-
-  HealthRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref StatusPulseHttpApi
-      RouteKey: "GET /health"
-      Target: !Sub "integrations/${HealthIntegration}"
-
-  # 🚨 FIXED SQS INTEGRATION (NON‑PROXY, SAFE)
+  # --- POST /events → SQS SendMessage (the correct HTTP API way) ------------
   EventsIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
       ApiId: !Ref StatusPulseHttpApi
-      IntegrationType: AWS
-      IntegrationUri: !Sub >-
-        arn:aws:apigateway:${AWS::Region}:sqs:path/${AWS::AccountId}/statuspulse-events-dev.fifo
+      IntegrationType: AWS_PROXY
+      IntegrationSubtype: SQS-SendMessage
       CredentialsArn: !Ref ApiGatewayRoleArn
       PayloadFormatVersion: "1.0"
       RequestParameters:
-        "integration.request.header.Content-Type": "'application/x-www-form-urlencoded'"
-      RequestTemplates:
-        "application/json": !Sub |
-          Action=SendMessage
-          &MessageBody=$util.urlEncode($input.body)
-          &MessageGroupId=default
+        QueueUrl: !Ref MainQueueUrl
+        MessageBody: "$request.body"
+        # FIFO requires a non-empty MessageGroupId. Pull from header; if you want
+        # a guaranteed default, see the note in the runbook about a fallback.
+        MessageGroupId: "$request.header.x-message-group-id"
 
   EventsRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -102,7 +87,7 @@ Resources:
       RouteKey: "POST /events"
       Target: !Sub "integrations/${EventsIntegration}"
 
-  # Stage
+  # --- Stage ----------------------------------------------------------------
   StatusPulseStage:
     Type: AWS::ApiGatewayV2::Stage
     Properties:
@@ -114,5 +99,18 @@ Resources:
         ThrottlingRateLimit: !Ref ThrottlingRateLimit
 
 Outputs:
+  HttpApiId:
+    Description: ID of the HTTP API.
+    Value: !Ref StatusPulseHttpApi
+    Export:
+      Name: !Sub "${AWS::StackName}-HttpApiId"
+
   InvokeUrl:
+    Description: Base URL for invoking the API.
     Value: !Sub "https://${StatusPulseHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-InvokeUrl"
+
+  EventsEndpoint:
+    Description: Full POST endpoint for ingesting events.
+    Value: !Sub "https://${StatusPulseHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/events"
