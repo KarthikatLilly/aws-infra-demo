@@ -141,8 +141,8 @@ Resources:
       RequestParameters:
         QueueUrl: !Ref MainQueueUrl
         MessageBody: "$request.body"
-        # FIFO queues require a MessageGroupId; use a header or default to "default"
         MessageGroupId: "$request.header.x-message-group-id"
+        MessageDeduplicationId: "$context.requestId"  
 
   EventsRoute:
     Type: AWS::ApiGatewayV2::Route
