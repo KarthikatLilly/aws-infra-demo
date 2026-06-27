@@ -4,7 +4,7 @@
   { "ParameterKey": "ThrottlingBurstLimit",   "ParameterValue": "50" },
   { "ParameterKey": "ThrottlingRateLimit",    "ParameterValue": "25" },
   { "ParameterKey": "CorsAllowOrigins",       "ParameterValue": "*" },
-  { "ParameterKey": "MainQueueUrl",           "ParameterValue": "REPLACE_WITH_MAIN_QUEUE_URL" },
-  { "ParameterKey": "MainQueueArn",           "ParameterValue": "REPLACE_WITH_MAIN_QUEUE_ARN" },
+  { "ParameterKey": "MainQueueUrl",           "ParameterValue":"https://sqs.us-east-1.amazonaws.com/024111598068/statuspulse-events-dev.fifo" },
+  { "ParameterKey": "MainQueueArn",           "ParameterValue": "arn:aws:sqs:us-east-1:024111598068:statuspulse-events-dev.fifo"},
   { "ParameterKey": "ApiGatewayRoleArn",      "ParameterValue": "arn:aws:iam::024111598068:role/statuspulse-dev-apigw-role" }
 ]
