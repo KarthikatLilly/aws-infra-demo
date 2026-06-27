@@ -141,8 +141,10 @@ Resources:
       RequestParameters:
         QueueUrl: !Ref MainQueueUrl
         MessageBody: "$request.body"
-        MessageGroupId: "$request.header.x-message-group-id"
-        MessageDeduplicationId: "$context.requestId"  
+        MessageGroupId: "default-group"
+        MessageDeduplicationId: "$context.requestId"
+
+
 
   EventsRoute:
     Type: AWS::ApiGatewayV2::Route
