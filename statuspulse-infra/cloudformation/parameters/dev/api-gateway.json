@@ -6,5 +6,5 @@
   { "ParameterKey": "CorsAllowOrigins",       "ParameterValue": "*" },
   { "ParameterKey": "MainQueueUrl",           "ParameterValue": "REPLACE_WITH_MAIN_QUEUE_URL" },
   { "ParameterKey": "MainQueueArn",           "ParameterValue": "REPLACE_WITH_MAIN_QUEUE_ARN" },
-  { "ParameterKey": "ApiGatewayRoleArn",      "ParameterValue": "REPLACE_WITH_APIGW_ROLE_ARN" }
+  { "ParameterKey": "ApiGatewayRoleArn",      "ParameterValue": "arn:aws:iam::024111598068:role/statuspulse-dev-apigw-role" }
 ]
