@@ -78,7 +78,7 @@ Resources:
     Properties:
       QueueName: !Sub "${QueueBaseName}-${EnvironmentName}-dlq.fifo"
       FifoQueue: true
-      ContentBasedDeduplication: !Equals [!Ref ContentBasedDeduplication, "true"]
+      ContentBasedDeduplication: true
       # Retain messages in DLQ for 14 days for investigation
       MessageRetentionPeriod: 1209600
       Tags:
@@ -95,7 +95,7 @@ Resources:
     Properties:
       QueueName: !Sub "${QueueBaseName}-${EnvironmentName}.fifo"
       FifoQueue: true
-      ContentBasedDeduplication: !Equals [!Ref ContentBasedDeduplication, "true"]
+      ContentBasedDeduplication: true
       VisibilityTimeout: !Ref VisibilityTimeoutSeconds
       # Route failed messages to DLQ after MaxReceiveCount attempts
       RedrivePolicy:
