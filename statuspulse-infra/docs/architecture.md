@@ -38,6 +38,34 @@ flowchart TD
 ```
 
 ---
+## Flow in a nutshell
+Client sends HTTP request →
+
+API Gateway:
+  - GET /health → mock response
+  - POST /events → sends message to SQS (via IAM role)
+
+SQS FIFO queue:
+  - stores ordered events
+  - retries failures
+  - ensures delivery
+
+DLQ:
+  - collects failed messages after max retries
+
+Future consumer (Processor layer):
+  - reads messages
+  - processes & normalizes them
+  - writes to DynamoDB
+
+DynamoDB:
+  - stores current + historical status data
+
+SNS:
+  - optional fan-out layer
+  - allows multiple consumers
+
+---
 
 ## Component Details
 
