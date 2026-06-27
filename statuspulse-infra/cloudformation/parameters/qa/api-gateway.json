@@ -1,0 +1,10 @@
+[
+  { "ParameterKey": "ApiBaseName",            "ParameterValue": "statuspulse-api-qa" },
+  { "ParameterKey": "StageName",              "ParameterValue": "qa" },
+  { "ParameterKey": "ThrottlingBurstLimit",   "ParameterValue": "100" },
+  { "ParameterKey": "ThrottlingRateLimit",    "ParameterValue": "50" },
+  { "ParameterKey": "CorsAllowOrigins",       "ParameterValue": "REPLACE_WITH_QA_CORS_ORIGINS" },
+  { "ParameterKey": "MainQueueUrl",           "ParameterValue": "REPLACE_WITH_QA_MAIN_QUEUE_URL" },
+  { "ParameterKey": "MainQueueArn",           "ParameterValue": "REPLACE_WITH_QA_MAIN_QUEUE_ARN" },
+  { "ParameterKey": "ApiGatewayRoleArn",      "ParameterValue": "REPLACE_WITH_QA_APIGW_ROLE_ARN" }
+]

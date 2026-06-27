@@ -1,0 +1,116 @@
+# =============================================================================
+# api-gateway.yml — StatusPulse HTTP API (API Gateway v2) — CORRECTED
+#
+# Key fixes vs the broken version:
+#   1. POST /events uses AWS_PROXY + IntegrationSubtype: SQS-SendMessage
+#      (HTTP APIs do NOT support IntegrationType: AWS or VTL RequestTemplates).
+#   2. GET /health no longer uses MOCK (MOCK is WebSocket-only on ApiGatewayV2).
+#      It uses an AWS_PROXY SQS-SendMessage-style integration is NOT a health
+#      check, so instead /health is implemented as a second SQS route would be
+#      wrong — we keep it honest: see note. For a true no-Lambda 200, we use a
+#      tiny inline-free approach: route to the same integration is not a health
+#      check. We therefore expose only the real ingest route here and document
+#      that /health on an HTTP API needs a Lambda or an external check.
+#
+#   --> Practical POC choice below: keep POST /events working (the thing that
+#       matters), and implement GET /health via a minimal AWS_PROXY to SQS is
+#       not viable. We instead omit MOCK and note the limitation.
+# =============================================================================
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  StatusPulse – HTTP API Gateway v2.
+  POST /events → SQS SendMessage (AWS_PROXY service integration, no Lambda).
+
+Parameters:
+  ApiBaseName:
+    Type: String
+    Default: statuspulse-api-dev
+
+  StageName:
+    Type: String
+    Default: dev
+
+  ThrottlingBurstLimit:
+    Type: Number
+    Default: 50
+
+  ThrottlingRateLimit:
+    Type: Number
+    Default: 25
+
+  CorsAllowOrigins:
+    Type: String
+    Default: "*"
+
+  MainQueueUrl:
+    Type: String
+    Description: URL of the SQS FIFO main queue.
+
+  ApiGatewayRoleArn:
+    Type: String
+    Description: IAM role API Gateway assumes; must allow sqs:SendMessage on the queue.
+
+Resources:
+
+  # --- HTTP API -------------------------------------------------------------
+  StatusPulseHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Ref ApiBaseName
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: !Split [",", !Ref CorsAllowOrigins]
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [Content-Type, Authorization, X-Amz-Date, X-Api-Key, x-message-group-id]
+
+  # --- POST /events → SQS SendMessage (the correct HTTP API way) ------------
+  EventsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationSubtype: SQS-SendMessage
+      CredentialsArn: !Ref ApiGatewayRoleArn
+      PayloadFormatVersion: "1.0"
+      RequestParameters:
+        QueueUrl: !Ref MainQueueUrl
+        MessageBody: "$request.body"
+        # FIFO requires a non-empty MessageGroupId. Pull from header; if you want
+        # a guaranteed default, see the note in the runbook about a fallback.
+        MessageGroupId: "$request.header.x-message-group-id"
+
+  EventsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      RouteKey: "POST /events"
+      Target: !Sub "integrations/${EventsIntegration}"
+
+  # --- Stage ----------------------------------------------------------------
+  StatusPulseStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref StatusPulseHttpApi
+      StageName: !Ref StageName
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: !Ref ThrottlingBurstLimit
+        ThrottlingRateLimit: !Ref ThrottlingRateLimit
+
+Outputs:
+  HttpApiId:
+    Description: ID of the HTTP API.
+    Value: !Ref StatusPulseHttpApi
+    Export:
+      Name: !Sub "${AWS::StackName}-HttpApiId"
+
+  InvokeUrl:
+    Description: Base URL for invoking the API.
+    Value: !Sub "https://${StatusPulseHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-InvokeUrl"
+
+  EventsEndpoint:
+    Description: Full POST endpoint for ingesting events.
+    Value: !Sub "https://${StatusPulseHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/events"

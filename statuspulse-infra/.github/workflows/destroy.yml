@@ -1,0 +1,186 @@
+# destroy.yml — Tear down StatusPulse CloudFormation stacks
+#
+# Safety rules
+#   1. Requires confirm == "destroy" to run at all.
+#   2. prod is blocked unless confirm_prod == "destroy-prod-permanently".
+#   3. Stacks are destroyed in reverse dependency order:
+#        api-gateway → sqs-fifo → sns → dynamodb
+
+name: Destroy StatusPulse
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment to destroy (dev, qa, prod).
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+      stack:
+        description: >
+          Specific stack to destroy (api-gateway, sqs-fifo, sns, dynamodb).
+          Leave blank to destroy ALL stacks in reverse order.
+        required: false
+        type: string
+        default: ""
+      confirm:
+        description: Type "destroy" to confirm teardown.
+        required: true
+        type: string
+      confirm_prod:
+        description: >
+          Type "destroy-prod-permanently" only if you mean to destroy prod.
+          Leave blank for dev/qa.
+        required: false
+        type: string
+        default: ""
+
+env:
+  DEFAULT_REGION: us-east-1
+
+jobs:
+
+  # --------------------------------------------------------------------------
+  # Gate: validate confirmation strings before touching anything
+  # --------------------------------------------------------------------------
+  gate:
+    name: Safety gate
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "destroy" ]; then
+            echo "ERROR: You must type 'destroy' in the confirm field."
+            exit 1
+          fi
+
+          if [ "${{ inputs.environment }}" = "prod" ]; then
+            if [ "${{ inputs.confirm_prod }}" != "destroy-prod-permanently" ]; then
+              echo "ERROR: Destroying prod requires confirm_prod = 'destroy-prod-permanently'."
+              exit 1
+            fi
+            echo "WARNING: Proceeding with PRODUCTION teardown."
+          fi
+
+          echo "Gate passed for environment: ${{ inputs.environment }}"
+
+  # --------------------------------------------------------------------------
+  # Destroy stacks in REVERSE dependency order
+  # --------------------------------------------------------------------------
+
+  destroy-api:
+    name: Destroy api-gateway
+    needs: gate
+    if: ${{ inputs.stack == '' || inputs.stack == 'api-gateway' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.DEFAULT_REGION }}
+          role-session-name: gha-destroy-api-${{ github.run_id }}
+
+      - name: Delete api-gateway stack
+        run: |
+          aws cloudformation delete-stack \
+            --stack-name "statuspulse-${{ inputs.environment }}-api-gateway" \
+            --region "${{ env.DEFAULT_REGION }}"
+          aws cloudformation wait stack-delete-complete \
+            --stack-name "statuspulse-${{ inputs.environment }}-api-gateway" \
+            --region "${{ env.DEFAULT_REGION }}"
+
+  destroy-sqs:
+    name: Destroy sqs-fifo
+    needs: [gate, destroy-api]
+    if: ${{ inputs.stack == '' || inputs.stack == 'sqs-fifo' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.DEFAULT_REGION }}
+          role-session-name: gha-destroy-sqs-${{ github.run_id }}
+
+      - name: Delete sqs-fifo stack
+        run: |
+          aws cloudformation delete-stack \
+            --stack-name "statuspulse-${{ inputs.environment }}-sqs-fifo" \
+            --region "${{ env.DEFAULT_REGION }}"
+          aws cloudformation wait stack-delete-complete \
+            --stack-name "statuspulse-${{ inputs.environment }}-sqs-fifo" \
+            --region "${{ env.DEFAULT_REGION }}"
+
+  destroy-sns:
+    name: Destroy sns
+    needs: [gate, destroy-sqs]
+    if: ${{ inputs.stack == '' || inputs.stack == 'sns' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.DEFAULT_REGION }}
+          role-session-name: gha-destroy-sns-${{ github.run_id }}
+
+      - name: Delete sns stack
+        run: |
+          aws cloudformation delete-stack \
+            --stack-name "statuspulse-${{ inputs.environment }}-sns" \
+            --region "${{ env.DEFAULT_REGION }}"
+          aws cloudformation wait stack-delete-complete \
+            --stack-name "statuspulse-${{ inputs.environment }}-sns" \
+            --region "${{ env.DEFAULT_REGION }}"
+
+  destroy-dynamodb:
+    name: Destroy dynamodb
+    needs: [gate, destroy-sns]
+    if: ${{ inputs.stack == '' || inputs.stack == 'dynamodb' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.DEFAULT_REGION }}
+          role-session-name: gha-destroy-dynamodb-${{ github.run_id }}
+
+      - name: Delete dynamodb stack
+        run: |
+          # Note: the DynamoDB template uses DeletionPolicy: Retain.
+          # The stack itself is deleted here, but the table is kept unless
+          # manually removed — an extra safety net for prod data.
+          aws cloudformation delete-stack \
+            --stack-name "statuspulse-${{ inputs.environment }}-dynamodb" \
+            --region "${{ env.DEFAULT_REGION }}"
+          aws cloudformation wait stack-delete-complete \
+            --stack-name "statuspulse-${{ inputs.environment }}-dynamodb" \
+            --region "${{ env.DEFAULT_REGION }}"

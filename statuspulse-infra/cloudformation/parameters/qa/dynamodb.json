@@ -1,0 +1,7 @@
+[
+  { "ParameterKey": "TableName",                   "ParameterValue": "statuspulse-qa" },
+  { "ParameterKey": "BillingMode",                 "ParameterValue": "PAY_PER_REQUEST" },
+  { "ParameterKey": "PointInTimeRecoveryEnabled",  "ParameterValue": "true" },
+  { "ParameterKey": "DeletionProtection",          "ParameterValue": "true" },
+  { "ParameterKey": "TTLAttributeName",            "ParameterValue": "ttl" }
+]

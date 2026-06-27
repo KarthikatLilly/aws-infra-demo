@@ -1,0 +1,8 @@
+[
+  { "ParameterKey": "QueueBaseName",               "ParameterValue": "statuspulse-events" },
+  { "ParameterKey": "EnvironmentName",             "ParameterValue": "dev" },
+  { "ParameterKey": "SnsTopicArn",                 "ParameterValue": "arn:aws:sns:us-east-1:024111598068:statuspulse-events-dev.fifo" },
+  { "ParameterKey": "VisibilityTimeoutSeconds",    "ParameterValue": "30" },
+  { "ParameterKey": "MaxReceiveCount",             "ParameterValue": "3" },
+  { "ParameterKey": "ContentBasedDeduplication",   "ParameterValue": "true" }
+]

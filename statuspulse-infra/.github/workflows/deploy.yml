@@ -1,0 +1,158 @@
+# deploy.yml — Orchestrates full environment deployments
+#
+# Triggers:
+#   push to main     → deploy to prod
+#   push to develop  → deploy to qa
+#   workflow_dispatch → manual deploy to dev / qa / prod (with guard for prod)
+#
+# Stack deployment order respects cross-stack dependencies:
+#   dynamodb → sns → sqs-fifo → api-gateway
+
+name: Deploy StatusPulse
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "statuspulse-infra/cloudformation/**"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/_deploy-stack.yml"
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment (dev, qa, prod).
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+        default: dev
+      stack:
+        description: >
+          Specific stack to deploy (dynamodb, sns, sqs-fifo, api-gateway).
+          Leave blank to deploy all stacks in order.
+        required: false
+        type: string
+        default: ""
+
+# ---------------------------------------------------------------------------
+# Helper: resolve the environment from the triggering branch
+# ---------------------------------------------------------------------------
+env:
+  DEFAULT_REGION: us-east-1
+
+jobs:
+
+  # --------------------------------------------------------------------------
+  # 1. Determine environment from branch (push triggers) or manual input
+  # --------------------------------------------------------------------------
+  resolve-env:
+    name: Resolve environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set.outputs.environment }}
+
+    steps:
+      - name: Set environment
+        id: set
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENV="${{ inputs.environment }}"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ENV="prod"
+          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            ENV="qa"
+          else
+            ENV="dev"
+          fi
+
+          # Guard: prod can only be deployed from main
+          if [ "$ENV" = "prod" ] && [ "${{ github.ref }}" != "refs/heads/main" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "ERROR: prod deployments are only allowed from the main branch."
+            exit 1
+          fi
+
+          echo "environment=$ENV" >> "$GITHUB_OUTPUT"
+          echo "Deploying to: $ENV"
+
+  # --------------------------------------------------------------------------
+  # 2. Validate templates before deploying
+  # --------------------------------------------------------------------------
+  validate:
+    name: Validate templates
+    runs-on: ubuntu-latest
+    needs: resolve-env
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install cfn-lint
+
+      - name: cfn-lint
+        run: |
+          cfn-lint statuspulse-infra/cloudformation/templates/*.yml
+
+  # --------------------------------------------------------------------------
+  # 3–6. Deploy stacks in dependency order
+  #      Each stack is skipped when a specific stack name is requested and
+  #      it does not match.
+  # --------------------------------------------------------------------------
+
+  deploy-dynamodb:
+    name: Deploy dynamodb
+    needs: [resolve-env, validate]
+    if: ${{ inputs.stack == '' || inputs.stack == 'dynamodb' }}
+    uses: ./.github/workflows/_deploy-stack.yml
+    with:
+      stack-name: statuspulse-${{ needs.resolve-env.outputs.environment }}-dynamodb
+      template-file: statuspulse-infra/cloudformation/templates/dynamodb.yml
+      parameter-file: statuspulse-infra/cloudformation/parameters/${{ needs.resolve-env.outputs.environment }}/dynamodb.json
+      aws-region: us-east-1
+      environment: ${{ needs.resolve-env.outputs.environment }}
+
+  deploy-sns:
+    name: Deploy sns
+    needs: [resolve-env, validate, deploy-dynamodb]
+    if: ${{ inputs.stack == '' || inputs.stack == 'sns' }}
+    uses: ./.github/workflows/_deploy-stack.yml
+    with:
+      stack-name: statuspulse-${{ needs.resolve-env.outputs.environment }}-sns
+      template-file: statuspulse-infra/cloudformation/templates/sns.yml
+      parameter-file: statuspulse-infra/cloudformation/parameters/${{ needs.resolve-env.outputs.environment }}/sns.json
+      aws-region: us-east-1
+      environment: ${{ needs.resolve-env.outputs.environment }}
+
+  deploy-sqs:
+    name: Deploy sqs-fifo
+    needs: [resolve-env, validate, deploy-sns]
+    if: ${{ inputs.stack == '' || inputs.stack == 'sqs-fifo' }}
+    uses: ./.github/workflows/_deploy-stack.yml
+    with:
+      stack-name: statuspulse-${{ needs.resolve-env.outputs.environment }}-sqs-fifo
+      template-file: statuspulse-infra/cloudformation/templates/sqs-fifo.yml
+      parameter-file: statuspulse-infra/cloudformation/parameters/${{ needs.resolve-env.outputs.environment }}/sqs-fifo.json
+      aws-region: us-east-1
+      environment: ${{ needs.resolve-env.outputs.environment }}
+
+  deploy-api:
+    name: Deploy api-gateway
+    needs: [resolve-env, validate, deploy-sqs]
+    if: ${{ inputs.stack == '' || inputs.stack == 'api-gateway' }}
+    uses: ./.github/workflows/_deploy-stack.yml
+    with:
+      stack-name: statuspulse-${{ needs.resolve-env.outputs.environment }}-api-gateway
+      template-file: statuspulse-infra/cloudformation/templates/api-gateway.yml
+      parameter-file: statuspulse-infra/cloudformation/parameters/${{ needs.resolve-env.outputs.environment }}/api-gateway.json
+      aws-region: us-east-1
+      environment: ${{ needs.resolve-env.outputs.environment }}
