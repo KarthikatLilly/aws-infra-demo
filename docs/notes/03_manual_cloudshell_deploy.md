@@ -246,3 +246,102 @@ This is what a future consumer would parse and write into DynamoDB (likely `pk =
 - Phase 4: wire GitHub Actions + OIDC so these deploys run in CI instead of CloudShell.
 - Decide whether `/health` is worth a small Lambda or stays dropped.
 ```
+
+
+---
+
+## Verification commands & expected outputs (Phase 3 proof log)
+
+These confirm the pipeline works end to end and that the role runs on least privilege.
+Run from anywhere in CloudShell — none of these depend on the current directory.
+
+### Set reusable variables (re-run if the session restarts)
+```bash
+QUEUE_URL="https://sqs.us-east-1.amazonaws.com/024111598068/statuspulse-events-dev.fifo"
+DLQ_URL="https://sqs.us-east-1.amazonaws.com/024111598068/statuspulse-events-dev-dlq.fifo"
+TOPIC_ARN="arn:aws:sns:us-east-1:024111598068:statuspulse-events-dev.fifo"
+EVENTS_URL="https://lb7nq7lsz2.execute-api.us-east-1.amazonaws.com/dev/events"
+```
+
+### 1. Scoped IAM policy (least privilege)
+```bash
+aws iam put-role-policy \
+  --role-name statuspulse-dev-apigw-role \
+  --policy-name statuspulse-dev-apigw-sqs-send \
+  --policy-document '{ "Version":"2012-10-17","Statement":[
+    {"Sid":"AllowSendToStatusPulseQueue","Effect":"Allow",
+     "Action":"sqs:SendMessage",
+     "Resource":"arn:aws:sqs:us-east-1:024111598068:statuspulse-events-dev.fifo"}]}'
+```
+**Expected:** no output = success (put-role-policy is silent on success).
+
+### 2. Remove the over-broad managed policies (finish least privilege)
+```bash
+aws iam detach-role-policy --role-name statuspulse-dev-apigw-role \
+  --policy-arn arn:aws:iam::aws:policy/AmazonSQSFullAccess
+aws iam detach-role-policy --role-name statuspulse-dev-apigw-role \
+  --policy-arn arn:aws:iam::aws:policy/AmazonSNSFullAccess
+```
+**Expected:** no output = success. Afterward the role should show only
+`AmazonAPIGatewayPushToCloudWatchLogs` + the inline `statuspulse-dev-apigw-sqs-send`.
+
+### 3. POST an event via API Gateway → SQS
+```bash
+curl -X POST "$EVENTS_URL" \
+  -H "Content-Type: application/json" \
+  -H "x-message-group-id: github-group" \
+  -d '{"service_id":"github","status":"degraded","checked_at":"2026-06-27T15:31:00Z"}'
+```
+**Expected:** raw SQS XML containing a `<MessageId>` and `<SequenceNumber>`.
+Getting a MessageId *after* step 2 proves the scoped policy alone is sufficient.
+
+### 4. Read messages back (non-destructive peek)
+```bash
+aws sqs receive-message \
+  --queue-url "$QUEUE_URL" \
+  --max-number-of-messages 10 \
+  --wait-time-seconds 5
+```
+**Expected:** a `Messages` array; each `Body` is the exact JSON sent.
+Note: receiving does NOT delete — messages go invisible for the visibility timeout (30s) then return.
+
+### 5. Queue depth (watch the visibility mechanism)
+```bash
+aws sqs get-queue-attributes \
+  --queue-url "$QUEUE_URL" \
+  --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible
+```
+**Expected:** right after a receive, `ApproximateNumberOfMessages` drops and
+`ApproximateNumberOfMessagesNotVisible` rises (in-flight). They swap back after the timeout.
+
+### 6. DLQ depth (should be empty)
+```bash
+aws sqs get-queue-attributes \
+  --queue-url "$DLQ_URL" \
+  --attribute-names ApproximateNumberOfMessages
+```
+**Expected:** `ApproximateNumberOfMessages: 0` (nothing has failed processing).
+
+### 7. SNS fan-out path (publish straight to the topic)
+```bash
+aws sns publish \
+  --topic-arn "$TOPIC_ARN" \
+  --message '{"service_id":"slack","status":"down","checked_at":"2026-06-27T16:00:00Z"}' \
+  --message-group-id slack-group \
+  --message-deduplication-id slack-$(date +%s)
+```
+**Expected:** a JSON response with a `MessageId` and `SequenceNumber` = SNS accepted it.
+Then re-run step 4 (after ~30s) — the `slack` message should appear in the queue,
+proving fan-out: one queue, two doors (API Gateway + SNS).
+
+---
+
+## Two timestamps — which one is real
+- **`checked_at`** (inside the body, e.g. 15:31Z): application data, set by the *producer*. Right now
+  that producer is me typing curl, so it's a hand-entered value — the pipeline never reads or validates it.
+  In production a monitoring tool (e.g. Splunk / a health-checker) would set it to the real check time.
+- **`Sent`** (SQS console, e.g. 20:59 IST): stamped by **SQS** when the message actually arrived. This is
+  the authoritative timestamp. It shows in local time (UTC+5:30) while `checked_at` is UTC (`Z`).
+- Takeaway: trust infrastructure-recorded timestamps over a producer's self-reported ones.
+- Also seen: a message's **Receive count** increments each time it's polled without deletion; at
+  `MaxReceiveCount` (3) the next failed receive redirects it to the DLQ. That's the redrive policy in action.
