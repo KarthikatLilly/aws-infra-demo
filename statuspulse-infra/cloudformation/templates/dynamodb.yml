@@ -70,7 +70,8 @@ Resources:
 
   StatusPulseTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain   # keep data if the stack is deleted
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Ref TableName
       BillingMode: !Ref BillingMode
