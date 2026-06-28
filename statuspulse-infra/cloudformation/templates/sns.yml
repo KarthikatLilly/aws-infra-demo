@@ -118,7 +118,7 @@ Resources:
       Protocol: !Ref InitialSubscriptionProtocol
       Endpoint: !Ref InitialSubscriptionEndpoint
       # For SQS subscriptions, raw delivery avoids the SNS envelope wrapper
-      RawMessageDelivery: !Equals [!Ref InitialSubscriptionProtocol, sqs]
+      RawMessageDelivery: true
 
 # ---------------------------------------------------------------------------
 # Outputs
